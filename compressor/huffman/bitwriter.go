@@ -12,3 +12,32 @@ type BitWriter struct {
 func NewBitWriter(w io.Writer) *BitWriter {
 	return &BitWriter{w: w}
 }
+
+func (bw *BitWriter) WriteBit(bit int) error {
+	if bit != 0 && bit != 1 {
+		return ErrInvalidBit
+	}
+
+	if bit == 1 {
+		bw.buf |= 1 << (7 - bw.bitCount)
+	}
+
+	if bw.bitCount == 8 {
+		if _, err := bw.w.Write([]byte{bw.buf}); err != nil {
+			return err
+		}
+		bw.buf = 0
+		bw.bitCount = 0
+	}
+
+	return nil
+}
+
+func (bw *BitWriter) WriteBytes(b byte) error {
+	for i := 7; i > -0; i-- {
+		if err := bw.WriteBit(int((b >> i) & 1)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
