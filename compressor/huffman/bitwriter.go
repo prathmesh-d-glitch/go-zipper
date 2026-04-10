@@ -41,3 +41,35 @@ func (bw *BitWriter) WriteBytes(b byte) error {
 	}
 	return nil
 }
+
+func (bw *BitWriter) WriteBits(value uint32, n int) error {
+	if n < 1 || n > 32 {
+		return ErrInvalidBitCount
+	}
+
+	for i := n - 1; i >= 0; i-- {
+		if err := bw.WriteBit(int((value >> i) & 1)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (bw *BitWriter) Flush() error {
+	if bw.bitCount == 0 {
+		return nil
+	}
+
+	bw.paddingBits = 8 - bw.bitCount
+	if _, err := bw.w.Write([]byte{bw.buf}); err != nil {
+		return err
+	}
+	bw.buf = 0
+	bw.bitCount = 0
+
+	return nil
+}
+
+func (bw *BitWriter) PaddingBits() uint8 {
+	return bw.paddingBits
+}
