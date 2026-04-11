@@ -5,7 +5,7 @@ import "fmt"
 type Token struct {
 	isLiteral bool
 	Literal   byte
-	Distance  int
+	Offset    int
 	Length    int
 }
 
@@ -13,8 +13,8 @@ func NewLiteral(b byte) Token {
 	return Token{isLiteral: true, Literal: b}
 }
 
-func NewBackReference(distance, length int) Token {
-	return Token{isLiteral: false, Distance: distance, Length: length}
+func NewBackReference(offset, length int) Token {
+	return Token{isLiteral: false, Offset: offset, Length: length}
 }
 
 //for debugging
@@ -25,5 +25,5 @@ func (t *Token) String() string {
 		}
 		return fmt.Sprintf("Literal(0x%02X)", t.Literal)
 	}
-	return fmt.Sprintf("BackRef(d=%d, l=%d)", t.Distance, t.Length)
+	return fmt.Sprintf("BackRef(d=%d, l=%d)", t.Offset, t.Length)
 }
