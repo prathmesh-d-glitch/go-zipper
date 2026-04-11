@@ -17,3 +17,19 @@ func hash3(data []byte, pos int) int {
 		int(data[pos+1])<<hashShift) ^
 		int(data[pos+2])&hashMask
 }
+
+func matchLength(data []byte, a, b, n int) int {
+	limit := MaxMatchLength
+	if n-b < limit {
+		limit = n - b
+	}
+	if n-a < limit {
+		limit = n - a
+	}
+
+	length := 0
+	for length < limit && data[a+length] == data[b+length] {
+		length++
+	}
+	return length
+}
