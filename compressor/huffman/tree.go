@@ -71,3 +71,69 @@ func (h *minHeap) siftDown(i int) {
 		i = smallest
 	}
 }
+
+func BuildTree(freq map[byte]int) *Node {
+	if len(freq) == 0 {
+		return nil
+	}
+
+	h := newMinHeap(len(freq))
+
+	for s, f := range freq {
+		h.push(&Node{Symbol: s, Frequency: f})
+	}
+
+	if h.len() == 1 {
+		leaf := h.pop()
+		return &Node{Frequency: leaf.Frequency,
+			Left: leaf,
+		}
+	}
+
+	for h.len() > 1 {
+		left := h.pop()
+		right := h.pop()
+		parent := &Node{
+			Frequency: left.Frequency + right.Frequency,
+			Left:      left,
+			Right:     right,
+		}
+		h.push(parent)
+	}
+	return h.pop()
+}
+
+func CountFrequencies(data []byte) map[byte]int {
+	freq := make(map[byte]int, 256)
+	for _, b := range data {
+		freq[b]++
+	}
+	return freq
+}
+
+func GenerateCodes(root *Node) map[byte]string {
+	codes := make(map[byte]string)
+	if root == nil {
+		return codes
+	}
+
+	var walk func(n *Node, code string)
+	walk = func(n *Node, code string) {
+		if n.IsLeaf() {
+			if code == "" {
+				code = "0"
+			}
+			codes[n.Symbol] = code
+			return
+		}
+		if n.Left != nil {
+			walk(n.Left, code+"0")
+		}
+		if n.Right != nil {
+			walk(n.Right, code+"1")
+		}
+	}
+	walk(root, "")
+
+	return codes
+}
