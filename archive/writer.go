@@ -2,6 +2,7 @@ package archive
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 )
 
@@ -61,4 +62,33 @@ func (w *Writer) AddFile(name string, compressedData []byte, originalSize uint64
 	})
 
 	return nil
+}
+
+func (w *Writer) Close() ([]byte, error) {
+	if w.closed {
+		return nil, fmt.Errorf("archive: writer is already closed")
+	}
+
+	w.closed = true
+
+	centralDirOffset := uint64(w.written)
+
+	if err := binary.Write(&w.buf, binary.LittleEndian, uint16(len(w.entries))); err != nil {
+		return nil, fmt.Errorf("archive: writing entry count: %w", err)
+	}
+
+	for _, e := range w.entries {
+		if err := binary.Write(&w.buf, binary.LittleEndian, e.dataOffset); err != nil {
+			return nil, fmt.Errorf("archive: writing data offset: %w", err)
+		}
+		if _, err := e.header.WriteTo(&w.buf); err != nil {
+			return nil, fmt.Errorf("archive: writing central header: %w", err)
+		}
+	}
+
+	if err := binary.Write(&w.buf, binary.LittleEndian, centralDirOffset); err != nil {
+		return nil, fmt.Errorf("archive: writing central directory offset: %w", err)
+	}
+
+	return w.buf.Bytes(), nil
 }
