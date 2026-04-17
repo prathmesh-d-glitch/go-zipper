@@ -86,3 +86,32 @@ func NewReader(data []byte) (*Reader, error) {
 		entries: entries,
 	}, nil
 }
+
+func (ar *Reader) Files() []FileHeader {
+	headers := make([]FileHeader, len(ar.entries))
+	for i, e := range ar.entries {
+		headers[i] = e.header
+	}
+	return headers
+}
+
+func (ar *Reader) ReadFile(name string) ([]byte, error) {
+	for _, e := range ar.entries {
+		if e.header.Name != name {
+			continue
+		}
+
+		if _, err := ar.r.Seek(int64(e.dataOffset), io.SeekStart); err != nil {
+			return nil, fmt.Errorf("archive: seeking to data for %q: %w", name, err)
+		}
+
+		data := make([]byte, e.header.CompressedSize)
+		if _, err := io.ReadFull(ar.r, data); err != nil {
+			return nil, fmt.Errorf("archive: reading data for %q: %w", name, err)
+		}
+
+		return data, nil
+	}
+
+	return nil, fmt.Errorf("archive: file %q not found", name)
+}
