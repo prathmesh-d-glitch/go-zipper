@@ -37,3 +37,53 @@ func CompressFiles(paths []string) ([]byte, error) {
 
 	return w.Close()
 }
+
+func DecompressArchive(data []byte, destDir string) error {
+	reader, err := NewReader(data)
+
+	if err != nil {
+		return err
+	}
+
+	for _, hdr := range reader.Files() {
+		compressed, err := reader.ReadFile(hdr.Name)
+		if err != nil {
+			return err
+		}
+
+		serialised, err := huffman.Decode(compressed)
+		if err != nil {
+			return fmt.Errorf("archive: huffman decode %q %w", hdr.Name, err)
+		}
+
+		tokens, err := lz77.DeserializeTokens(serialised)
+		if err != nil {
+			return fmt.Errorf("archive: token deserialise %q: %w", hdr.Name, err)
+		}
+
+		original, err := lz77.Decode(tokens)
+		if err != nil {
+			return fmt.Errorf("archive: lz77 decode %q: %w", hdr.Name, err)
+		}
+
+		if !utils.Verify(original, hdr.CRC32) {
+			return fmt.Errorf(
+				"archive: CRC32 mismatch for %q: got 0x%08X, want 0x%08X",
+				hdr.Name, utils.Checksum(original), hdr.CRC32,
+			)
+		}
+
+		if uint64(len(original)) != hdr.OriginalSize {
+			return fmt.Errorf(
+				"archive: size mismatch for %q,got %d, want %d",
+				hdr.Name, len(original), hdr.OriginalSize,
+			)
+		}
+
+		outPath := utils.GetFileName(hdr.Name)
+		if err := utils.WriteFile(destDir+"/"+outPath, original); err != nil {
+			return fmt.Errorf("archive: writing %q: %w", outPath, err)
+		}
+	}
+	return nil
+}
