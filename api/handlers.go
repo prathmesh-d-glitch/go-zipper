@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+
+	"github.com/prathmesh-d-glitch/go-zipper/archive"
 )
 
 const maxUploadize = 32 << 20
@@ -35,6 +38,22 @@ func compressHandler(w http.ResponseWriter, r *http.Request) {
 			paths = append(paths, saved)
 		}
 	}
+
+	if len(paths) == 0 {
+		jsonError(w, "no files uploaded", http.StatusBadRequest)
+		return
+	}
+
+	archiveData, err := archive.CompressFiles(paths)
+	if err != nil {
+		jsonError(w, "compression failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="archive.fzp"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(archiveData)))
+	w.Write(archiveData)
 
 }
 
