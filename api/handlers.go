@@ -57,6 +57,39 @@ func compressHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func decompressHandler(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxUploadize); err != nil {
+		jsonError(w, "failed to parse multipart form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		jsonError(w, "no archive file provided (use form field \"file\")", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	archiveBytes, err := io.ReadAll(file)
+	if err != nil {
+		jsonError(w, "failed to read uploaded archive: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	extractDir, err := os.MkdirTemp("", "fz-decompress-*")
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer os.RemoveAll(extractDir)
+
+	if err := archive.DecompressArchive(archiveBytes, extractDir); err != nil {
+		jsonError(w, "decompression failed: "+err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+}
+
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
