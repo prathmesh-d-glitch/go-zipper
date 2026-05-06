@@ -88,6 +88,30 @@ func decompressHandler(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "decompression failed: "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+
+	entries, err := os.ReadDir(extractDir)
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	var paths []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			paths = append(paths, filepath.Join(extractDir, entry.Name()))
+		}
+	}
+
+	result, err := archive.CompressFiles(paths)
+	if err != nil {
+		jsonError(w, "repackaging failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="decompressed.fzp"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(result)))
+	w.Write(result)
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
