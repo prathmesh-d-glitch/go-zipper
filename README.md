@@ -75,7 +75,7 @@ flowchart TD
     D --> E[Huffman Encode\ncompressor/huffman/encoder.go]
     E --> F[CRC Checksum\nutils/checksum.go]
     F --> G[Archive Writer\narchive/writer.go]
-    G --> H([.gz Archive returned to client])
+    G --> H([.fzp Archive returned to client])
 
     style A fill:#1e293b,color:#f1f5f9,stroke:#334155
     style H fill:#1e293b,color:#f1f5f9,stroke:#334155
