@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/prathmesh-d-glitch/go-zipper/archive"
 )
 
@@ -39,6 +40,7 @@ func newSessionID() string {
 func compressHandler(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxUploadize); err != nil {
 		jsonError(w, "failed to parse multipart form: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 	defer r.MultipartForm.RemoveAll()
 
@@ -142,6 +144,34 @@ func decompressHandler(w http.ResponseWriter, r *http.Request) {
 		"download_url_template": fmt.Sprintf(
 			"GET /decompress/%s/{filename}", sid),
 	})
+}
+
+func decompressFileHandler(w http.ResponseWriter, r *http.Request) {
+	sid := chi.URLParam(r, "sessionID")
+	name := chi.URLParam(r, "filename")
+
+	sessionMU.RLock()
+	sess, ok := sessions[sid]
+	sessionMU.RUnlock()
+
+	if !ok {
+		jsonError(w, "session not found or expired", http.StatusNotFound)
+		return
+	}
+
+	for _, f := range sess.files {
+		if filepath.Base(f.Name) == name {
+			cd := fmt.Sprintf(`attachment; filename="%s"`, name)
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Disposition", cd)
+			w.Header().Set("Content-Length", strconv.Itoa(len(f.Data)))
+			w.WriteHeader(http.StatusOK)
+			w.Write(f.Data)
+			return
+		}
+	}
+
+	jsonError(w, fmt.Sprintf("file %q not found in session", name), http.StatusNotFound)
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
