@@ -99,41 +99,49 @@ func decompressHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	extractDir, err := os.MkdirTemp("", "fz-decompress-*")
+	extracted, err := archive.ExtractFiles(archiveBytes)
 	if err != nil {
-		jsonError(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	defer os.RemoveAll(extractDir)
-
-	if err := archive.DecompressArchive(archiveBytes, extractDir); err != nil {
 		jsonError(w, "decompression failed: "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 
-	entries, err := os.ReadDir(extractDir)
-	if err != nil {
-		jsonError(w, "internal error", http.StatusInternalServerError)
+	if len(extracted) == 0 {
+		jsonError(w, "archive contains no files", http.StatusUnprocessableEntity)
 		return
 	}
 
-	var paths []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			paths = append(paths, filepath.Join(extractDir, entry.Name()))
-		}
-	}
-
-	result, err := archive.CompressFiles(paths)
-	if err != nil {
-		jsonError(w, "repackaging failed: "+err.Error(), http.StatusInternalServerError)
+	// Single file → stream the raw bytes back directly.
+	if len(extracted) == 1 {
+		f := extracted[0]
+		cd := fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(f.Name))
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", cd)
+		w.Header().Set("Content-Length", strconv.Itoa(len(f.Data)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(f.Data)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="decompressed.fzp"`)
-	w.Header().Set("Content-Length", strconv.Itoa(len(result)))
-	w.Write(result)
+	// Multiple files → store in session, return a manifest.
+	sid := newSessionID()
+	sess := &session{files: extracted}
+	sessionMU.Lock()
+	sessions[sid] = sess
+	sessionMU.Unlock()
+
+	names := make([]string, len(extracted))
+	for i, f := range extracted {
+		names[i] = f.Name
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"session_id": sid,
+		"files":      names,
+		"download_url_template": fmt.Sprintf(
+			"GET /decompress/%s/{filename}", sid),
+	})
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
