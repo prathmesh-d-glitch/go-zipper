@@ -67,7 +67,7 @@ func Encode(data []byte) []Token {
 		if bestLen >= MinMatchLength {
 			tokens = append(tokens, NewBackReference(bestDist, bestLen))
 
-			for i := 0; i < bestLen; i++ {
+			for i := 1; i < bestLen; i++ {
 				next := pos + i
 				if next+MinMatchLength <= n {
 					h := hash3(data, next)
@@ -86,8 +86,8 @@ func Encode(data []byte) []Token {
 
 func hash3(data []byte, pos int) int {
 	return (int(data[pos])<<(2*hashShift) ^
-		int(data[pos+1])<<hashShift) ^
-		int(data[pos+2])&hashMask
+		int(data[pos+1])<<hashShift ^
+		int(data[pos+2])) & hashMask
 }
 
 func matchLength(data []byte, a, b, n int) int {
