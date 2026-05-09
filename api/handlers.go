@@ -2,18 +2,40 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"github.com/prathmesh-d-glitch/go-zipper/archive"
 )
 
-const maxUploadize = 32 << 20
+// from 32 MB to 128 MB in-memory portion of multipart parsing
+const maxUploadize = 128 << 20
 
+//session store
+//decompressed sessions held in memory so that individual files can be downloaded
+
+type session struct {
+	files []archive.ExtractedFile
+}
+
+var (
+	sessionMU sync.RWMutex
+	sessions  = make(map[string]*session)
+	sessionID uint64
+)
+
+func newSessionID() string {
+	sessionMU.Lock()
+	defer sessionMU.Unlock()
+	sessionID++
+	return fmt.Sprintf("%d", sessionID)
+}
 func compressHandler(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(maxUploadize); err != nil {
 		jsonError(w, "failed to parse multipart form: "+err.Error(), http.StatusBadRequest)
