@@ -16,8 +16,9 @@ func NewRouter() chi.Router {
 
 	//roytes
 	r.Get("/health", healthHandler)
-	r.Get("/compress", compressHandler)
-	r.Get("/decompress", decompressHandler)
+	r.Post("/compress", compressHandler)
+	r.Post("/decompress", decompressHandler)
+	r.Get("/decompress/{sessionID}/{filename}", decompressFileHandler)
 
 	return r
 }
