@@ -21,6 +21,7 @@ func (bw *BitWriter) WriteBit(bit int) error {
 	if bit == 1 {
 		bw.buf |= 1 << (7 - bw.bitCount)
 	}
+	bw.bitCount++
 
 	if bw.bitCount == 8 {
 		if _, err := bw.w.Write([]byte{bw.buf}); err != nil {
