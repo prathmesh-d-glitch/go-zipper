@@ -13,10 +13,12 @@ const (
 )
 
 type Task struct {
-	ID        string
-	Type      TaskType
-	InputPath string
-	InputData []byte
+	ID         string
+	Type       TaskType
+	InputPath  string
+	InputData  []byte
+	OutputPath string
+	Metadata   map[string]string
 }
 
 func (t *Task) Validate() error {
