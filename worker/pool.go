@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -39,6 +40,7 @@ func NewPool(newWorkers, queueSize int) *Pool {
 	return p
 }
 
+// goroutine body
 func (p *Pool) worker(id int) {
 	defer p.wg.Done()
 
@@ -128,4 +130,26 @@ func (p *Pool) processDecompress(workerID int, task Task) Result {
 	res.Output = original
 	res.BytesOut = int64(len(original))
 	return res
+}
+
+// Enqueue a task
+func (p *Pool) Submit(task Task) error {
+	select {
+	case p.tasks <- task:
+		return nil
+	default:
+		return errors.New("worker: task queue is full")
+	}
+}
+
+func (p *Pool) Results() <-chan Result {
+	return p.results
+}
+
+func (p *Pool) Shutdown() {
+	p.once.Do(func() {
+		close(p.tasks)
+		p.wg.Wait()
+		close(p.results)
+	})
 }
