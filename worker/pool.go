@@ -16,7 +16,7 @@ type Pool struct {
 	tasks   chan Task
 	results chan Result
 	wg      sync.WaitGroup
-	once    sync.Once
+	once    sync.Once //makes sure shitdown executes only once
 }
 
 func NewPool(newWorkers, queueSize int) *Pool {
@@ -142,10 +142,11 @@ func (p *Pool) Submit(task Task) error {
 	}
 }
 
-func (p *Pool) Results() <-chan Result {
+func (p *Pool) Results() <-chan Result { //reciever only channel : can read not write to protect internal state
 	return p.results
 }
 
+// executes only once due to sync.Once
 func (p *Pool) Shutdown() {
 	p.once.Do(func() {
 		close(p.tasks)
