@@ -8,6 +8,10 @@ A Go-based file compression and decompression utility exposing a RESTful HTTP AP
 
 - [Project Structure](#project-structure)
 - [Architecture](#architecture)
+  - [Compression Pipeline](#compression-pipeline)
+  - [Decompression Pipeline](#decompression-pipeline)
+  - [Worker Pool](#worker-pool)
+  - [Archive Format Layout](#archive-format-layout)
 - [Installation and Setup](#installation-and-setup)
 - [Configuration](#configuration)
 - [Usage Guide](#usage-guide)
@@ -32,8 +36,15 @@ go-zipper/
 │
 ├── archive/                         # Archive format definition and orchestration
 │   ├── archive.go                   # Archive struct, metadata schema, and format constants
+│   ├── pipeline.go                  # CompressData / DecompressData primitives used by CLI & pool
 │   ├── writer.go                    # Encodes and writes compressed data to archive format
 │   └── reader.go                    # Reads and validates archive files for decompression
+│
+├── worker/                          # Concurrent goroutine pool
+│   ├── task.go                      # Task struct, TaskType constants, Validate()
+│   ├── result.go                    # Result struct and CompressionRatio / ToJSON helpers
+│   ├── pool.go                      # Pool implementation: NewPool, Submit, Results, Shutdown
+│   └── worker_test.go               # Unit + integration tests for the pool
 │
 ├── compressor/
 │   ├── huffman/                     # Huffman encoding and decoding
@@ -131,6 +142,191 @@ flowchart LR
     AW -->|archive bytes| CL
     LZ -->|decompressed files| CL
 ```
+
+### Worker Pool
+
+The `worker` package implements a fixed-size goroutine pool that compresses or decompresses multiple files **concurrently** without blocking the caller. It is used by both the CLI `compress` command (via `worker.NewPool`) and is available to any future parallel workload.
+
+#### Why a Worker Pool?
+
+Processing files one by one is simple but slow when many files are involved. A worker pool keeps a fixed number of goroutines alive and feeds them work through a buffered channel. The caller submits tasks non-blocking and reads results whenever it's ready — the pool handles all the concurrency internally.
+
+#### Pool Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Pool
+    participant Worker0
+    participant Worker1
+
+    Caller->>Pool: NewPool(numWorkers=2, queueSize=4)
+    Pool->>Worker0: go worker(0)  — blocks on tasks channel
+    Pool->>Worker1: go worker(1)  — blocks on tasks channel
+
+    Caller->>Pool: Submit(task A)
+    Caller->>Pool: Submit(task B)
+    Caller->>Pool: Submit(task C)
+
+    Pool-->>Worker0: task A
+    Pool-->>Worker1: task B
+    Worker0-->>Pool: Result(A)
+    Pool-->>Worker0: task C
+    Worker1-->>Pool: Result(B)
+    Worker0-->>Pool: Result(C)
+
+    Caller->>Pool: Shutdown()
+    Pool->>Worker0: close(tasks) → range exits
+    Pool->>Worker1: close(tasks) → range exits
+    Pool->>Pool: wg.Wait() — drain all workers
+    Pool->>Pool: close(results)
+
+    Caller->>Pool: for r := range Results()
+    Pool-->>Caller: Result(A)
+    Pool-->>Caller: Result(B)
+    Pool-->>Caller: Result(C)
+    Note over Caller,Pool: results channel closed → loop ends
+```
+
+#### Data Flow Through the Pool
+
+```mermaid
+flowchart TD
+    subgraph Caller
+        S([Submit Tasks])
+        R([Read Results])
+    end
+
+    subgraph Pool
+        TQ["tasks chan (buffered)"]
+        RQ["results chan (buffered)"]
+    end
+
+    subgraph Workers
+        W0[goroutine 0]
+        W1[goroutine 1]
+        W2[goroutine N]
+    end
+
+    subgraph Pipeline
+        direction LR
+        P1[Read File / Input Bytes]
+        P2[LZ77 Encode or Decode]
+        P3[Huffman Encode or Decode]
+        P4[CRC-32 Checksum]
+    end
+
+    S -->|non-blocking| TQ
+    TQ --> W0 & W1 & W2
+    W0 & W1 & W2 --> P1 --> P2 --> P3 --> P4
+    P4 -->|Result| RQ
+    RQ --> R
+
+    style TQ fill:#1e3a5f,color:#e2e8f0,stroke:#3b82f6
+    style RQ fill:#1e3a5f,color:#e2e8f0,stroke:#3b82f6
+```
+
+#### Channel Anatomy
+
+```
+NewPool(numWorkers=3, queueSize=4)
+
+  tasks channel  [████░░░░]  capacity: 4   (buffered — Submit never blocks unless full)
+                  ↑↑↑↑
+              submitted tasks
+
+  goroutines     [G0] [G1] [G2]            (always alive, blocking on tasks channel)
+                   ↓    ↓    ↓
+  results channel [████████]  capacity: 4  (buffered — workers never block writing results)
+                       ↓
+                  caller reads via Results()
+
+  Submit()       — non-blocking select; returns error if tasks channel is full
+  Shutdown()     — closes tasks, wg.Wait(), closes results  (sync.Once — safe to call twice)
+  Results()      — returns receive-only <-chan Result; range exits when channel closes
+```
+
+#### Structs and Functions
+
+##### `task.go`
+
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `TaskType` | `string` type | Typed constant — prevents raw string mistakes (`"compress"` / `"decompress"`) |
+| `TaskCompress` | const | Signals the worker to read `InputPath` from disk and compress it |
+| `TaskDecompress` | const | Signals the worker to decompress `InputData` bytes already in memory |
+| `Task` | struct | A single unit of work submitted to the pool |
+| `Task.ID` | field | Unique identifier — returned in `Result.TaskID` so you can match results to inputs |
+| `Task.Type` | field | `TaskCompress` or `TaskDecompress` |
+| `Task.InputPath` | field | File path on disk — used only for compress tasks |
+| `Task.InputData` | field | Raw compressed bytes — used only for decompress tasks |
+| `Task.OutputPath` | field | Optional destination path (used by the caller, not the pool itself) |
+| `Task.Metadata` | field | `map[string]string` key-value bag; pool stores the computed CRC-32 here |
+| `Task.Validate()` | method | Pre-flight check: ID non-empty, correct input field set for the given type |
+
+##### `result.go`
+
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `Result` | struct | Everything the caller needs after a task completes |
+| `Result.TaskID` | field | Echoes `Task.ID` — used to correlate result to the original task |
+| `Result.Output` | field | Compressed bytes (compress) or restored bytes (decompress) |
+| `Result.Err` | field | Non-nil if anything failed; always check before using `Output` |
+| `Result.BytesIn` | field | Bytes entering the pipeline (original file size or compressed size) |
+| `Result.BytesOut` | field | Bytes leaving the pipeline (compressed size or restored size) |
+| `Result.DurationMs` | field | Wall-clock milliseconds the task took |
+| `Result.WorkerID` | field | Which goroutine processed this task |
+| `CompressionRatio()` | method | `BytesOut / BytesIn` — values below `1.0` mean the data shrank |
+| `IsSuccess()` | method | `true` when `Err == nil`; use this as the first check on every result |
+| `ToJSON()` | method | JSON-encodes metadata only (excludes `Output` bytes); safe for logging/status APIs |
+
+##### `pool.go`
+
+| Symbol | Kind | Description |
+|--------|------|-------------|
+| `Pool` | struct | The pool itself — holds the two buffered channels, WaitGroup, and Once |
+| `Pool.tasks` | `chan Task` | Buffered job queue — workers read from here |
+| `Pool.results` | `chan Result` | Buffered output queue — workers write here, caller reads |
+| `Pool.wg` | `sync.WaitGroup` | Tracks live workers so `Shutdown` can wait for them all |
+| `Pool.once` | `sync.Once` | Ensures `Shutdown` logic runs exactly once even if called concurrently |
+| `NewPool(n, q)` | func | Starts `n` goroutines with a job buffer of size `q`; returns immediately |
+| `Submit(task)` | method | Non-blocking enqueue via `select/default`; returns error if queue is full |
+| `Results()` | method | Returns a receive-only `<-chan Result`; range over it to consume all results |
+| `Shutdown()` | method | Closes `tasks` → workers drain and exit → `wg.Wait()` → closes `results` |
+| `worker(id)` | private | Goroutine body: range over `tasks`, call `process`, send to `results` |
+| `process(id, task)` | private | Dispatches to compress or decompress; wraps with panic recovery and timing |
+| `processCompress` | private | Reads file → CRC-32 → LZ77.Encode → SerializeTokens → Huffman.Encode |
+| `processDecompress` | private | Huffman.Decode → DeserializeTokens → LZ77.Decode |
+
+#### Panic Safety
+
+Every task runs inside a `defer recover()`. If any stage of the DEFLATE pipeline panics (nil pointer, out-of-bounds slice, etc.) the panic is caught, converted into a normal `Result.Err`, and emitted on the results channel. **The pool never crashes** — it keeps processing the remaining tasks.
+
+#### Typical Usage Pattern
+
+```go
+pool := worker.NewPool(4, len(files))   // 4 goroutines, buffer = number of files
+
+for i, path := range files {
+    pool.Submit(worker.Task{
+        ID:        strconv.Itoa(i),
+        Type:      worker.TaskCompress,
+        InputPath: path,
+    })
+}
+
+go pool.Shutdown()  // signal no more tasks; closes results when done
+
+for result := range pool.Results() {
+    if !result.IsSuccess() {
+        log.Printf("task %s failed: %v", result.TaskID, result.Err)
+        continue
+    }
+    fmt.Printf("compressed %d → %d bytes\n", result.BytesIn, result.BytesOut)
+}
+```
+
+---
 
 ### Archive Format Layout
 
@@ -380,6 +576,15 @@ The archive format is self-describing: it embeds filenames, original sizes, comp
 ### Multiple File Support
 
 A single compress request may include multiple files. All files are encoded and stored within one archive. During decompression, all original files are reconstructed from that single archive in their original form.
+
+### Concurrent Worker Pool
+
+File compression is CPU-bound. The `worker` package provides a **fixed-size goroutine pool** that processes multiple files in parallel, making full use of available CPU cores. Key properties:
+
+- **Non-blocking submission** — `Submit()` uses a `select/default` pattern and returns an error immediately if the queue is full, so the caller is never blocked.
+- **Ordered results** — workers return results as they finish; the CLI maps results back to input order using `Task.ID`.
+- **Panic-safe** — any pipeline panic is caught by a `defer recover()` inside each worker and converted to a `Result.Err`, keeping the pool alive.
+- **Clean shutdown** — `Shutdown()` closes the task channel, waits for all in-flight work to complete via `sync.WaitGroup`, then closes the results channel, allowing callers to range cleanly over `Results()`.
 
 ### RESTful HTTP API
 
